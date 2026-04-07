@@ -1,3 +1,200 @@
-Reference URL : https://gossamer-duck-07e.notion.site/AI-1-30879bfcde048015bcd8d1c4ce1b86a3?pvs=74
+# AI Emotional Embedded
 
-YOUTUBE URL : https://www.youtube.com/watch?v=5EN8w97rY4k&source_ve_path=MjM4NTE&embeds_referring_euri=https%3A%2F%2Fgossamer-duck-07e.notion.site%2F
+Raspberry Pi 5、表情認識AI、照度センサー、Unity WebGL UI を統合したリアルタイム感情インターフェース試作です。
+
+## デモ
+- YouTube: https://www.youtube.com/watch?v=5EN8w97rY4k
+- Itch.io: https://leesanghan.itch.io/emotionproject
+
+---
+
+## 概要
+
+本プロジェクトは、**Raspberry Pi 5** 上で動作する組み込みAIインターフェースの試作です。  
+カメラ映像からユーザーの表情を推定し、その結果を **Unity WebGL UI** 上でリアルタイムに表示します。  
+さらに、**YL-40照度センサー** によって昼夜状態を判定し、UIの状態変化へ反映しました。
+
+### 主な機能
+- リアルタイム表情認識
+- **8種類の表情**の表示
+- 表情ごとの**信頼度（確率）**表示
+- 照度センサーによる Day / Night 判定
+- Unity WebGL によるリアルタイムUI可視化
+- WebSocket を用いた外部処理結果の連携
+
+---
+
+## システム構成
+
+本プロジェクトは、**環境制約を前提とした分割構成**で設計しました。
+
+### 処理フロー
+1. **Camera / Picamera2**  
+   Raspberry Pi 上でカメラ画像を取得
+
+2. **Local UDP**  
+   取得した画像をAI処理環境へ転送
+
+3. **AI処理（Python 仮想環境）**  
+   MediaPipe により **52個の Blendshape 特徴量**を抽出し、表情分類を実行
+
+4. **センサー処理（I2C）**  
+   YL-40 照度センサーから値を取得し、Low-pass filter を適用して安定した昼夜判定を実施
+
+5. **WebSocket 通信**  
+   推定結果をリアルタイムで Unity 側へ送信
+
+6. **Unity WebGL**  
+   表情、信頼度、昼夜状態、UI変化を可視化
+
+### 設計上のポイント
+- MediaPipe の対応バージョン制約により、**カメラ実行環境**と**AI推論環境**を分離
+- WebGL では通常の UDP / TCP 通信に制約があるため、**WebSocket** を採用
+- 表情認識は以下の**ハイブリッド構成**で安定性を向上
+  - **RandomForest**：5表情分類
+  - **ルールベース判定**：3表情補完
+
+---
+
+## 技術的な課題
+
+### 1. MediaPipe と Python / OS 環境の不整合
+Raspberry Pi の最新環境では Python 3.13 が使われていましたが、MediaPipe の対応に制約があり、そのままでは導入できませんでした。  
+そのため、
+
+- カメラ取得環境
+- AI推論環境
+
+を分離し、**Local UDP** で画像を橋渡しする構成にしました。
+
+### 2. WebGL における通信制約
+Raspberry Pi 上で Unity を動作させるために **WebGL ビルド**を採用しましたが、WebGL では通常の UDP / TCP 通信に制約があります。  
+そのため、**WebSocket + NativeWebSocket** によりリアルタイム通信を実現しました。
+
+### 3. 8クラス表情分類の難しさ
+AffectNet 由来のラベルには、人間でも区別が難しい表情が含まれており、8クラス分類では精度と安定性が低下しました。
+
+そこで、
+- 識別しやすい **5表情**は RandomForest で分類
+- 残り **3表情**は Blendshape 閾値を使ったルールベースで補完
+- さらに **移動平均** によりフレームごとの揺れを抑制
+
+という形で、ハイブリッド構成にしました。
+
+---
+
+## 実装内容
+
+### ハイブリッド表情判定
+本プロジェクトでは、すべての表情を機械学習だけに依存せず、  
+**明確に定義しやすい表情はルールベース**、**曖昧な表情は機械学習**で補完する構成を採用しました。
+
+- ルールベース例
+  - Sleep
+  - Pouting
+  - Suspicious
+- ML fallback
+  - 52個の Blendshape 特徴量を入力として RandomForest で分類
+
+### 照度センサーの平滑化
+YL-40 の値は環境変化やノイズによって瞬間的に揺れやすいため、  
+ソフトウェア側で **Low-pass filter** を実装し、安定した Day / Night 判定を行いました。
+
+### UDP画像ストリーミング
+カメラ取得環境と AI 処理環境を分離したため、  
+軽量かつ低遅延なリアルタイム転送が必要でした。
+
+処理フローは以下の通りです。
+
+1. Picamera2 で画像取得
+2. OpenCV で JPEG 圧縮
+3. Local UDP で画像を送信
+
+---
+
+## 成果
+
+### 表情認識性能
+- 初期の 8クラスAI分類：**約40〜50%**
+- データ精査・特徴選択後：
+  - 5クラス RandomForest：**約95%**
+  - 残り3クラスはルールベースで補完
+- 最終的に、**8表情の安定認識**を実現
+
+### リアルタイム処理性能
+
+| 環境 | フレームタイム | FPS |
+| --- | --- | --- |
+| PC | 約11.4ms | 約88 FPS |
+| Raspberry Pi 5 | 約16.5ms | 約60 FPS |
+
+- AI処理
+- WebSocket 通信
+- センサー入力
+
+を同時実行しても、**約60FPS** を維持しました。  
+Raspberry Pi 単体でも実用的なリアルタイム動作を確認できました。
+
+### 安定性向上施策の効果
+
+| 技術 | 効果 |
+| --- | --- |
+| 移動平均フィルタ | 表情揺れ・誤判定の減少 |
+| Low-pass filter | 照度センサーノイズの低減 |
+| ハイブリッド分類 | 曖昧表情による精度低下の防止 |
+| UDP + WebSocket | 低遅延なリアルタイム連携 |
+
+---
+
+## 使用技術
+
+### ハードウェア
+- Raspberry Pi 5
+- Camera Module
+- YL-40 Light Sensor
+
+### ソフトウェア
+- Unity（WebGL）
+- C#
+- Python 3.11 / 3.13
+- MediaPipe
+- OpenCV
+- RandomForest
+- WebSocket
+- UDP
+- I2C
+
+---
+
+## 担当内容
+
+- Raspberry Pi と WebGL の制約を踏まえたシステム構成の設計
+- Unity 側 UI 可視化処理の実装
+- AI処理結果と Unity をつなぐリアルタイム通信の構築
+- ハイブリッド表情分類ロジックの実装
+- 照度センサー値の平滑化と Day / Night UI 反映
+- リアルタイム安定動作に向けた全体調整
+
+---
+
+## リポジトリ構成
+
+- `Assets/` : Unity アセット、Scene、Script、UI リソース
+- `Packages/` : Unity パッケージ依存関係
+- `ProjectSettings/` : Unity プロジェクト設定
+
+---
+
+## 補足
+
+本リポジトリは、主に **Unity 側の実装と統合部分**を中心にまとめています。  
+ハードウェア側や外部実行環境の一部については、完全再現のために追加設定が必要になる場合があります。
+
+---
+
+## 今後の改善点
+
+- Unity 側スクリプトのモジュール化
+- 通信設定や環境依存値の整理
+- 表情フィードバック表現の拡張
+- ハードウェア側セットアップ手順の再現性向上
